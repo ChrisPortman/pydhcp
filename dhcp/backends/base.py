@@ -39,11 +39,8 @@ class DHCPBackend(metaclass=DHCPBackendMeta):
         """ Process a release """
         raise NotImplementedError()
 
-    def pxe_boot_request(self, packet, lease):
-        """ Add pxe boot options to a lease """
-
-    def uefi_boot_request(self, packet, lease):
-        """ Add UEFI boot options to a lease """
+    def boot_request(self, packet, lease):
+        """ Add boot options to the lease """
 
 
 def get_backend(name):

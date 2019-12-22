@@ -39,10 +39,13 @@ def lease_to_packet(lease, src_packet, message_type, siaddr):
 class Server():
     """ A DHCP server """
 
-    def __init__(self, backend, interface="*", server_name=None):
+    # pylint: disable=too-many-instance-attributes
+
+    def __init__(self, backend, interface="*", server_name=None, authoritative=False):
         self.backend = backend
         self.interface = interface
         self.server_name = server_name or socket.gethostname()
+        self.authoritative = authoritative
 
         self.ipaddrs = dict()
         self.subnets = dict()
@@ -85,22 +88,6 @@ class Server():
                     if handler:
                         handler(sock, packet)
 
-    @staticmethod
-    def send_packet(sock, packet):
-        """ Send packet to client """
-
-        dst = "255.255.255.255"
-        dport = 68
-
-        if not packet.ciaddr.is_unspecified:
-            dst = str(packet.ciaddr)
-
-        if not packet.giaddr.is_unspecified:
-            dst = str(packet.giaddr)
-            dport = 67
-
-        sock.sendto(packet.pack(), (dst, dport))
-
     def handle_discover(self, sock, packet):
         """ Handle a DHCP Discover message """
 
@@ -109,6 +96,9 @@ class Server():
         lease = self.backend.offer(packet)
         if not lease:
             return
+
+        if 66 in packet.requested_options and 67 in packet.requested_options:
+            self.backend.boot_request(packet, lease)
 
         self.requests[packet.xid] = lease
         offer = lease_to_packet(
@@ -124,10 +114,8 @@ class Server():
 
         logger.info("%s: Received REQUEST", format_mac(packet.chaddr))
         offer = self.requests.pop(packet.xid, None)
-        lease = self.backend.acknowledge(packet, offer)
 
-        if not lease:
-            # No lease available for this request send NAK
+        if self.authoritative and offer is None:
             nack = Packet()
             nack.clone_from(packet)
             nack.op = PacketType.BOOTREPLY
@@ -141,6 +129,7 @@ class Server():
             self.send_packet(sock, nack)
             return
 
+        lease = self.backend.acknowledge(packet, offer)
         ack = lease_to_packet(lease, packet, MessageType.DHCPACK,
                               self.ipaddrs[sock])
 
@@ -196,3 +185,19 @@ class Server():
                     _make_sock(_i)
             else:
                 _make_sock(self.interface)
+
+    @staticmethod
+    def send_packet(sock, packet):
+        """ Send packet to client """
+
+        dst = "255.255.255.255"
+        dport = 68
+
+        if not packet.ciaddr.is_unspecified:
+            dst = str(packet.ciaddr)
+
+        if not packet.giaddr.is_unspecified:
+            dst = str(packet.giaddr)
+            dport = 67
+
+        sock.sendto(packet.pack(), (dst, dport))

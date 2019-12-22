@@ -13,6 +13,8 @@ LOGGER = logging.getLogger(__name__)
 class NetboxBackend(DHCPBackend):
     """ Manage DHCP leases from Netbox """
 
+    NAME = "netbox"
+
     @property
     def client(self):
         """ Create and cache a netbox client on first use """
@@ -36,15 +38,12 @@ class NetboxBackend(DHCPBackend):
         """ Generate an appropriate offer based on packet.  Return a dhcp.lease.Lease object """
         return self._find_lease(packet)
 
-    def acknowledge(self, packet, offer=None):
-        """ Action the acknowledgement and return a dhcp.lease.Lease object.  If found, the lease
-        created in the offer step is passed as offer. Return None to send a NACK to the client
+    def acknowledge(self, packet, offer):
+        """ Acknowledge the request for the previously provided offer.  If the offer is for a
+        dynamic address, set the expiry time accordingly.
         """
 
-        if offer:
-            return offer
-
-        return self._find_lease(packet)
+        return offer
 
     def release(self, packet):
         """ Action release request as per packet """

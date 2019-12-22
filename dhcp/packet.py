@@ -106,10 +106,25 @@ class Packet():
         return hostname.value if hostname else None
 
     @property
+    def client_arch(self):
+        """ Return the arch type of the client """
+
+        arches = ["Intel x86PC", "NEC/PC98", "EFI Itanium", "DEC Alpha"
+                  "Arc x86", "Intel Learn Client", "EFI IA32", "EFI BC"
+                  "EFI Xscale", "EFI x86-64"]
+
+        class_id = self.find_option(PacketOption.CLASS_IDENT)
+        if class_id and len(class_id.value) == 32:
+            arch_id = int(class_id.split(":")[2])
+            return arches[arch_id]
+
+        return "unknown"
+
+    @property
     def requested_options(self):
-        """ Returns the requested options if present otherwise None """
+        """ Returns the requested options """
         options = self.find_option(PacketOption.PARAMETER_REQUEST_LIST)
-        return options.value if options else None
+        return options.value if options else []
 
     def __init__(self):
         self.op = None  # pylint: disable=C0103
