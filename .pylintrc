@@ -1,0 +1,12 @@
+[MASTER]
+load-plugins=pylint_quotes
+
+[BASIC]
+
+# Good variable names which should always be accepted, separated by a comma
+good-names=i,j,k,ex,ip,logger
+
+# String quoting standard
+string-quote=double
+triple-quote=double
+docstring-quote=double
