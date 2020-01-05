@@ -13,7 +13,13 @@ class DHCPBackendMeta(type):
 
     def __new__(cls, clsname, bases, attrs):
         newclass = super().__new__(cls, clsname, bases, attrs)
-        BACKENDS[clsname] = newclass
+
+        if newclass.__name__ != "DHCPBackend":
+            if not hasattr(newclass, "NAME"):
+                setattr(newclass, "NAME", newclass.__name__)
+
+            BACKENDS[newclass.NAME] = newclass
+
         return newclass
 
 
@@ -21,11 +27,6 @@ class DHCPBackend(metaclass=DHCPBackendMeta):
     """ Base DHCP backend """
 
     DISABLED = False
-
-    @property
-    def NAME(self):  # pylint: disable=invalid-name
-        """ Return a default name property """
-        return self.__class__.__name__
 
     def offer(self, packet):
         """ Generate an offer in response to a DISCOVER """

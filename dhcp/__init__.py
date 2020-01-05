@@ -6,36 +6,32 @@ import logging
 
 from dhcp.server import Server
 from dhcp.backends import get_backend
+from dhcp.settings import SETTINGS
 
-LOGGER = logging.getLogger("dhcp")
-LOGGER.setLevel(logging.INFO)
-LOGGER.addHandler(
+logger = logging.getLogger("dhcp")
+logger.setLevel(logging.INFO)
+logger.addHandler(
     logging.StreamHandler()
 )
 
 
 def run():
     """ Run dhcp """
-    backend = None
-    args = []
+    SETTINGS.parse()
 
-    if len(sys.argv) < 2:
-        backend = os.getenv("PYDHCP_BACKEND", None)
-    else:
-        backend = sys.argv[1]
-        if len(sys.argv) > 2:
-            args = sys.argv[2:]
+    backend = get_backend(SETTINGS.backend)
+    server = Server(backend=backend())
 
-    if not backend:
-        print("Usage: %s <backend_name> {[<backend_arg>]}" % sys.argv[0])
-        sys.exit(1)
+    logger.info("Starting DHCP server")
 
-    backend = get_backend(backend)
-    server = Server(backend=backend(*args))
+    try:
+        server.serve()
+    except KeyboardInterrupt:
+        pass
+    except Exception as ex:
+        logger.error("Error running DHCP server: %s", str(ex), exc_info=True)
 
-    LOGGER.info("Starting DHCP server")
-    server.serve()
-    LOGGER.info("DHCP server stopped")
+    logger.info("DHCP server stopped")
 
 
 if __name__ == "__main__":

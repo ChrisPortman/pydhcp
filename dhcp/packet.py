@@ -115,7 +115,7 @@ class Packet():
 
         class_id = self.find_option(PacketOption.CLASS_IDENT)
         if class_id and len(class_id.value) == 32:
-            arch_id = int(class_id.split(":")[2])
+            arch_id = int(class_id.value.decode().split(":")[2])
             return arches[arch_id]
 
         return "unknown"

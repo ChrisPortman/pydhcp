@@ -13,7 +13,7 @@ logger = logging.getLogger("dhcp")
 DHCP_LISTEN_PORT = 67
 
 
-def lease_to_packet(lease, src_packet, message_type, siaddr):
+def lease_to_packet(lease, src_packet, message_type, sname):
     """ Generate a DHCP packet based on a `Lease` and the incomming
     packet that inspired the lease.
     """
@@ -22,16 +22,12 @@ def lease_to_packet(lease, src_packet, message_type, siaddr):
     new.clone_from(src_packet)
     new.op = PacketType.BOOTREPLY
     new.yiaddr = lease.client_ip
-    new.siaddr = siaddr
 
     if lease.tftp_server:
-        new.sname = lease.tftp_server
-
-    if lease.tftp_filename:
-        new.bootfile = lease.tftp_filename
+        new.siaddr = ipaddress.IPv4Address(lease.tftp_server)
 
     new.options.append(Option(PacketOption.MESSAGE_TYPE, message_type))
-    new.options.append(Option(PacketOption.SERVER_IDENT, siaddr))
+    new.options.append(Option(PacketOption.SERVER_IDENT, sname))
     new.options += lease.options
     return new
 
@@ -98,6 +94,9 @@ class Server():
             return
 
         if 66 in packet.requested_options and 67 in packet.requested_options:
+            logger.info("Boot parameters requested")
+            logger.info(packet.requested_options)
+            logger.info("Booting client arch: %s", packet.client_arch)
             self.backend.boot_request(packet, lease)
 
         self.requests[packet.xid] = lease
@@ -107,6 +106,7 @@ class Server():
 
         logger.info("%s: Sending OFFER of %s",
                     format_mac(packet.chaddr), str(lease.client_ip))
+        offer.dump()
         self.send_packet(sock, offer)
 
     def handle_request(self, sock, packet):
@@ -114,6 +114,9 @@ class Server():
 
         logger.info("%s: Received REQUEST", format_mac(packet.chaddr))
         offer = self.requests.pop(packet.xid, None)
+
+        if offer is None:
+            offer = self.backend.offer(packet)
 
         if self.authoritative and offer is None:
             nack = Packet()
@@ -135,6 +138,8 @@ class Server():
 
         logger.info("%s: Sending ACK of %s",
                     format_mac(packet.chaddr), str(lease.client_ip))
+
+        ack.dump()
         self.send_packet(sock, ack)
 
     def handle_release(self, packet):
