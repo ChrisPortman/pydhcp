@@ -26,9 +26,12 @@ class NetboxBackend(DHCPBackend):
         self._client = pynetbox.api(self.url, self.token)
         return self._client
 
-    def __init__(self, url=None, token=None):
+    def __init__(self, url=None, token=None, allow_unknown_devices=False):
         self.url = url or SETTINGS.netbox_url or os.getenv("NETBOX_URL", None)
         self.token = token or SETTINGS.netbox_token or os.getenv("NETBOX_TOKEN", None)
+        self.allow_unknown_devices = allow_unknown_devices or \
+            SETTINGS.netbox_allow_unknown_devices or \
+            os.getenv("NETBOX_ALLOW_UNKNOWN_DEVICES", False)
 
         if not self.url and self.token:
             raise RuntimeError("url and token required for netbox backend")
@@ -63,15 +66,14 @@ class NetboxBackend(DHCPBackend):
                            device.name, confirmation)
             return
 
-        config_context = device.config_context
-        boot_infra = device.config_context.get("boot_infrastructure", {})
-        tftp_server = boot_infra.get("tftp_server", None)
+        pydhcp_configuration = device.config_context.get("pydhcp_configuration", {})
+        tftp_server = pydhcp_configuration.get("tftp_server", None)
         boot_filepath = None
 
         if packet.client_arch in ("Intel x86PC",):
-            boot_filepath = boot_infra.get("pxe_boot_file", None)
+            boot_filepath = pydhcp_configuration.get("pxe_boot_file", None)
         if packet.client_arch in ("EFI BC",):
-            boot_filepath = boot_infra.get("uefi_boot_file", None)
+            boot_filepath = pydhcp_configuration.get("uefi_boot_file", None)
 
         if tftp_server and boot_filepath:
             lease.tftp_server = tftp_server
@@ -80,25 +82,25 @@ class NetboxBackend(DHCPBackend):
         logger.info(lease)
 
     def _find_lease(self, packet):
-        return self._find_static_lease(packet)
-
-    def _find_static_lease(self, packet):
-        device, interface = self._find_device_and_interface(packet)
-
-        if interface is None:
+        prefix = self._find_prefix(packet.receiving_ip)
+        if not prefix:
+            logger.warning("No prefix configured containing IP %s", packet.receiving_ip)
             return None
 
-        if device is None:
+        device, interface = self._find_device_and_interface(packet)
+        if device is None and not self.allow_unknown_devices:
+            return None
+
+        return self._find_static_lease(device, interface, prefix) or \
+            self._find_dynamic_lease(device, interface, prefix)
+
+    def _find_static_lease(self, device, interface, prefix):
+        if device is None or interface is None:
             return None
 
         if hasattr(interface, "lag") and interface.lag is not None:
             # Link aggregation interface member
             interface = interface.lag
-
-        prefix = self._find_prefix(packet.receiving_ip)
-        if not prefix:
-            logger.warning("No prefix configured containing IP %s", packet.receiving_ip)
-            return None
 
         ip_addresses = self.client.ipam.ip_addresses.filter(interface_id=interface.id)
 
@@ -115,7 +117,8 @@ class NetboxBackend(DHCPBackend):
         if router_ip:
             router_ip = ipaddress.IPv4Interface(router_ip[0]).ip
 
-        dns_server_ips = device.config_context.get("dns_servers", [])
+        pydhcp_configuration = device.config_context.get("pydhcp_configuration", {})
+        dns_server_ips = pydhcp_configuration.get("dns_servers", [])
         dns_server_ips = [ipaddress.ip_address(i) for i in dns_server_ips]
         dns_server_ips = dns_server_ips or [router_ip]
 
@@ -130,14 +133,68 @@ class NetboxBackend(DHCPBackend):
 
         return lease
 
+    def _find_dynamic_lease(self, device, interface, prefix):
+        """ Find a dynamic IP address for the the discover/request using the following process
+        - If the interface is known, and it has a 'DHCP' tagged IP assigned, realocate the same
+        IP and extend the lease period.
+        - If the interface is known, select an available DHCP tagged IP address and allocate it
+        to the interface.
+        - If the interface is not known, select an available IP and allocate it via the IP comments
+
+        In all cases, the details of the lease (mac, and expire time) will be recorded in the comments
+        of the IP address.
+
+        An IP is considered available for dynamic allocation when the following conditions are met:
+            - The IP is tagged 'DHCP'
+            - The comments are empty OR the comments contain an expire time value that is in the past.
+        """
+
+        allocated_ip = None
+        ip_pool = self._find_dynamic_pool_ips(prefix)
+
+        for ip in ip_pool:
+            if interface and ip.interface and interface.url == ip.interface.url:
+                allocated_ip = ip
+                break
+
+            current_mac = ip.custom_fields.get("pydhcp_mac", None)
+            expire_time = ip.custom_fields.get("pydhcp_expire", None)
+
+            if current_mac.upper() == packet.client_mac.upper():
+                allocated_ip = ip
+
+            if allocated_ip is None and expire_time is None:
+                allocated_ip = ip
+
+        if allocated_ip:
+            allocated_ip.custom_fields["pydhcp_mac"] = packet.client_mac.upper()
+            allocated_ip.custom_fields["pydhcp_expire"] = datetime.now()
+            allocated_ip.interface = interface
+            allocated_ip.save()
+
+        return
+
     def _find_device_and_interface(self, packet):
-        interface = self.client.dcim.interfaces.get(mac_address=packet.client_mac.upper()) or \
-            self.client.virtualization.interfaces.get(mac_address=packet.client_mac.upper())
-        if interface is None:
+        # The api to lookup virtual interfaces by mac appears to be broken, but we can get the
+        # device directly with mac and then enumerate its interfaces to get the correct one.
+
+        device = self.client.dcim.devices.get(mac_address=packet.client_mac.upper()) or \
+            self.client.virtualization.virtual_machines.get(mac_address=packet.client_mac.upper())
+
+        if device is None:
             return None, None
 
-        device = interface.device if hasattr(interface, "device") else interface.virtual_machine
-        device.full_details()
+        if hasattr(device, "vcpus"):
+            # virtual machine
+            interfaces = self.client.virtualization.interfaces.filter(virtual_machine_id=device.id)
+        else:
+            interfaces = self.client.dcim.interfaces.filter(device_id=device.id)
+
+        interface = None
+        for _i in interfaces:
+            if _i.mac_address.upper() == packet.client_mac.upper():
+                interface = _i
+                break
 
         return device, interface
 
@@ -151,12 +208,18 @@ class NetboxBackend(DHCPBackend):
         prefixes.sort(key=lambda p: int(p.prefix.split("/")[-1]))
         return prefixes[0]
 
+    def _find_dynamic_pool_ips(self, prefix):
+        return self.client.ipam.ip_addresses.filter(parent=str(prefix), tag="DHCP")
+
     @classmethod
     def add_backend_args(cls):
         """ Add argparse arguments for this backend """
         group = SETTINGS.add_argument_group(title=cls.NAME, description=cls.__doc__)
         group.add_argument("--netbox-url", help="The Netbox instance URL")
         group.add_argument("--netbox-token", help="The netbox authentication token")
+        group.add_argument("--netbox-allow-unknown-devices",
+                           help="Allow dynamic leases for unknown devices",
+                           action="store_true")
 
 
 try:

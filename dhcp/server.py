@@ -89,7 +89,12 @@ class Server():
 
         logger.info("%s: Received DISCOVER", format_mac(packet.chaddr))
 
-        lease = self.backend.offer(packet)
+        try:
+            lease = self.backend.offer(packet)
+        except Exception as ex:
+            logger.error("Backend produced an error handling discover: %s", str(ex))
+            lease = None
+
         if not lease:
             return
 
@@ -116,7 +121,10 @@ class Server():
         offer = self.requests.pop(packet.xid, None)
 
         if offer is None:
-            offer = self.backend.offer(packet)
+            try:
+                offer = self.backend.offer(packet)
+            except Exception as ex:
+                logger.error("Backend produced an error handling request: %s", str(ex))
 
         if self.authoritative and offer is None:
             nack = Packet()
