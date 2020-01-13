@@ -18,8 +18,8 @@ Each backend will likely have its own dependancies which should be optionally in
 
 The basic usage provides for 3 command line arguments:
  * `-i|--interface`: specify `*` to listen on all interfaces, or specify one or more times with an interface name (e.g. "eth0") to listen on specific interfaces.
- * `-a|--authoritive: boolean flag. Authoritative DHCP servers send a NAK to clients it does not wish to provide a lease to which will effectively stop DHCP on the client.  Non-authoritative servers will simply ignore the client leaving other DHCP servers free to respond.
- * `-b|--backend: the name of the backend to use.  The selection of a backend will invoke the need for backend specific arguments.
+ * `-a|--authoritive`: boolean flag. Authoritative DHCP servers send a NAK to clients it does not wish to provide a lease to which will effectively stop DHCP on the client.  Non-authoritative servers will simply ignore the client leaving other DHCP servers free to respond.
+ * `-b|--backend`: the name of the backend to use.  The selection of a backend will invoke the need for backend specific arguments.
  
 E.g:
 ```
