@@ -44,10 +44,10 @@ There are a number of values that are looked up via the configuration context da
 
 #### Supporting Dynamic Leases
 If you wish to support dynamic leases, the following custom fields will need to be setup in netbox and applied to `IPAM->IP Address` objects:
- * `pydhcp_mac`: text field used to store the MAC address to which the IP was last allocated. Set `required=false, no default`
- * `pydhcp_expire`: used to store the expiry time of the lease. Set `required=false, no default`
+ * `pydhcp_mac`: text field used to store the MAC address to which the IP was last allocated. Set required=false, no default.
+ * `pydhcp_expire`: used to store the expiry time of the lease. Set required=false, no default.
  
-Note that these names for the custom fields are the internal names.  You may use whatever labels for the fields suit your fancy.
+Note that these names for the custom fields are the internal names.  You may use whatever labels/descriptions for the fields suit your fancy.
 
 To make an IP address available for dynamic assignment, create the prefix, and IP addresses and tag the IP addresses `DHCP`.
 
