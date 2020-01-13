@@ -39,6 +39,8 @@ Dynamic leases are achievable by tagging IP addresses with `DHCP`.
  * There must be a prefix defined containing any IP address you want PyDHCP to allocate.
  * The default gateway for any lease is determined by the IP address within the allocation's prefix that is tagged `Gateway`.
  * DNS servers for any lease is determined by looking up `config_context['pydhcp_configuration']['dns_servers']`.  The value must be a list of IP addresses.  When generating a lease for a MAC address that resolves to an Interface attached to a Device or Virtual Machine, the Configuration Context of the Device or Virtual Machine will be used.  In other cases, the configuration context for the site to which the Prefix is allocated will be used.
+ 
+There are a number of values that are looked up via the configuration context data that netbox provides.  Configuration context is a hierachical process of applying configuration type data to objects whereby configuration data is overlayed in order of priority/scope to reach the final configuration as it applies to a specific object.  How to specifically structure the config data in your environment will depend on you circumstances, as long as the devices (and sites in some cases) have the required context rendered for them.
 
 #### Supporting Dynamic Leases
 If you wish to support dynamic leases, the following custom fields will need to be setup in netbox and applied to `IPAM->IP Address` objects:
@@ -55,5 +57,6 @@ The netbox backend provides a process for supporting the automated deployment of
  * `tftp_server`: the IP address of the TFTP server
  * `pxe_boot_file`: the path of the file to load via TFTP in the case of legacy, non UEFI based, bioses.  Required if supporting such systems.
  * `uefi_boot_file`: the path of the file to load via TFTP in the case of UEFI based boot processes.  Required if supporting such systems.
+
 
 
