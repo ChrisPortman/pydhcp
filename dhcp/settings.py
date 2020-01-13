@@ -25,6 +25,7 @@ class _Settings():
         backend_choices = [cls.NAME for cls in BACKENDS.values() if not cls.DISABLED]
         self.parser.add_argument("-i", "--interface", default="*", type=str)
         self.parser.add_argument("-a", "--authoritative", action="store_true")
+        self.parser.add_argument("-l", "--lease_time", default=None, type=int)
         self.parser.add_argument("-b", "--backend",
                                  choices=backend_choices,
                                  required=True)

@@ -3,6 +3,7 @@
 import os
 import logging
 import ipaddress
+from datetime import datetime, timedelta, timezone
 
 from dhcp.backends.base import DHCPBackend
 from dhcp.lease import Lease
@@ -26,9 +27,10 @@ class NetboxBackend(DHCPBackend):
         self._client = pynetbox.api(self.url, self.token)
         return self._client
 
-    def __init__(self, url=None, token=None, allow_unknown_devices=False):
+    def __init__(self, url=None, token=None, allow_unknown_devices=False, lease_time=None):
         self.url = url or SETTINGS.netbox_url or os.getenv("NETBOX_URL", None)
         self.token = token or SETTINGS.netbox_token or os.getenv("NETBOX_TOKEN", None)
+        self.lease_time = lease_time or SETTINGS.lease_time or int(os.getenv("PYDHCP_LEASE_TIME", 3600))
         self.allow_unknown_devices = allow_unknown_devices or \
             SETTINGS.netbox_allow_unknown_devices or \
             os.getenv("NETBOX_ALLOW_UNKNOWN_DEVICES", False)
@@ -56,6 +58,10 @@ class NetboxBackend(DHCPBackend):
         """ Add boot params to the supplied lease """
 
         device, _ = self._find_device_and_interface(packet)
+
+        if device is None:
+            logger.warning("Received boot request from unknown machine with MAC: %s", packet.client_mac.upper())
+            return
 
         if not device.custom_fields.get("redeploy", False):
             return
@@ -92,7 +98,7 @@ class NetboxBackend(DHCPBackend):
             return None
 
         return self._find_static_lease(device, interface, prefix) or \
-            self._find_dynamic_lease(device, interface, prefix)
+            self._find_dynamic_lease(packet, device, interface, prefix)
 
     def _find_static_lease(self, device, interface, prefix):
         if device is None or interface is None:
@@ -106,6 +112,10 @@ class NetboxBackend(DHCPBackend):
 
         offer_ip = None
         for ip in ip_addresses:
+            if ip.status.value == 5:
+                # this is a dynamic IP
+                continue
+
             ip_interface = ipaddress.ip_interface(ip.address)
             if ip_interface.ip in ipaddress.ip_network(prefix.prefix):
                 offer_ip = ip_interface
@@ -113,27 +123,16 @@ class NetboxBackend(DHCPBackend):
         else:
             return None
 
-        router_ip = self.client.ipam.ip_addresses.filter(parent=str(prefix), tag="gateway") or None
-        if router_ip:
-            router_ip = ipaddress.IPv4Interface(router_ip[0]).ip
-
-        pydhcp_configuration = device.config_context.get("pydhcp_configuration", {})
-        dns_server_ips = pydhcp_configuration.get("dns_servers", [])
-        dns_server_ips = [ipaddress.ip_address(i) for i in dns_server_ips]
-        dns_server_ips = dns_server_ips or [router_ip]
-
         lease = Lease(
             client_ip=offer_ip.ip,
             client_mask=offer_ip.network.netmask,
         )
-        if router_ip:
-            lease.router = router_ip
-        if dns_server_ips:
-            lease.dns_addresses = dns_server_ips
+
+        self._add_network_settings_to_lease(lease, device, prefix)
 
         return lease
 
-    def _find_dynamic_lease(self, device, interface, prefix):
+    def _find_dynamic_lease(self, packet, device, interface, prefix):
         """ Find a dynamic IP address for the the discover/request using the following process
         - If the interface is known, and it has a 'DHCP' tagged IP assigned, realocate the same
         IP and extend the lease period.
@@ -141,38 +140,84 @@ class NetboxBackend(DHCPBackend):
         to the interface.
         - If the interface is not known, select an available IP and allocate it via the IP comments
 
-        In all cases, the details of the lease (mac, and expire time) will be recorded in the comments
-        of the IP address.
+        In all cases, the details of the lease (mac, and expire time) will be recorded in the
+        comments of the IP address.
 
         An IP is considered available for dynamic allocation when the following conditions are met:
             - The IP is tagged 'DHCP'
-            - The comments are empty OR the comments contain an expire time value that is in the past.
+            - The comments are empty OR the comments contain an expire time value that is in
+              the past.
         """
 
         allocated_ip = None
-        ip_pool = self._find_dynamic_pool_ips(prefix)
 
-        for ip in ip_pool:
-            if interface and ip.interface and interface.url == ip.interface.url:
-                allocated_ip = ip
-                break
+        if interface:
+            ip_addresses = self.client.ipam.ip_addresses.filter(interface_id=interface.id)
+            for ip in ip_addresses:
+                if ip.status.value == 5:
+                    allocated_ip = ip
+                    break
 
-            current_mac = ip.custom_fields.get("pydhcp_mac", None)
-            expire_time = ip.custom_fields.get("pydhcp_expire", None)
+        if allocated_ip is None:
+            ip_pool = self._find_dynamic_pool_ips(prefix)
+            for ip in ip_pool:
+                if interface and ip.interface and interface.url == ip.interface.url:
+                    allocated_ip = ip
+                    break
 
-            if current_mac.upper() == packet.client_mac.upper():
-                allocated_ip = ip
+                current_mac = ip.custom_fields.get("pydhcp_mac", None)
+                try:
+                    expire_time = datetime.fromisoformat(
+                        ip.custom_fields.get("pydhcp_expire", None)
+                    )
+                except Exception:
+                    expire_time = None
 
-            if allocated_ip is None and expire_time is None:
-                allocated_ip = ip
+                if current_mac and current_mac.upper() == packet.client_mac.upper():
+                    allocated_ip = ip
+
+                if allocated_ip is None:
+                    if expire_time is None or datetime.now(timezone.utc) > expire_time:
+                        allocated_ip = ip
 
         if allocated_ip:
+            expire = (datetime.now(timezone.utc) + timedelta(seconds=self.lease_time)).isoformat()
             allocated_ip.custom_fields["pydhcp_mac"] = packet.client_mac.upper()
-            allocated_ip.custom_fields["pydhcp_expire"] = datetime.now()
+            allocated_ip.custom_fields["pydhcp_expire"] = expire
             allocated_ip.interface = interface
             allocated_ip.save()
 
-        return
+        allocated_ip_iface = ipaddress.ip_interface(allocated_ip.address)
+        lease = Lease(
+            client_ip=allocated_ip_iface.ip,
+            client_mask=allocated_ip_iface.network.netmask,
+        )
+
+        self._add_network_settings_to_lease(lease, device, prefix)
+
+        return lease
+
+    def _add_network_settings_to_lease(self, lease, device, prefix):
+        router_ip = self.client.ipam.ip_addresses.filter(parent=str(prefix), tag="gateway") or None
+        if router_ip:
+            router_ip = ipaddress.IPv4Interface(router_ip[0]).ip
+            lease.router = router_ip
+
+        if device is not None:
+            pydhcp_configuration = device.config_context.get("pydhcp_configuration", {})
+        elif prefix.site:
+            site_config_contexts = self.client.extras.config_contexts.filter(site_id=prefix.site.id)
+            for scc in site_config_contexts:
+                pydhcp_configuration = scc.data.get("pydhcp_configuration", {})
+                if pydhcp_configuration:
+                    break
+
+        dns_server_ips = pydhcp_configuration.get("dns_servers", [])
+        dns_server_ips = [ipaddress.ip_address(i) for i in dns_server_ips]
+        dns_server_ips = dns_server_ips or [router_ip]
+
+        if dns_server_ips:
+            lease.dns_addresses = dns_server_ips
 
     def _find_device_and_interface(self, packet):
         # The api to lookup virtual interfaces by mac appears to be broken, but we can get the
@@ -209,7 +254,7 @@ class NetboxBackend(DHCPBackend):
         return prefixes[0]
 
     def _find_dynamic_pool_ips(self, prefix):
-        return self.client.ipam.ip_addresses.filter(parent=str(prefix), tag="DHCP")
+        return self.client.ipam.ip_addresses.filter(parent=str(prefix), status=5)
 
     @classmethod
     def add_backend_args(cls):

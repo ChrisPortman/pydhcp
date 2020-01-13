@@ -32,7 +32,7 @@ E.g:
  
 The netbox backend will use a netbox instance to generate lease information.  Static leases are achieved by configuring a Device or Virtual Machine with a network interface that has the MAC address properly set and an IP address assigned.  If this is the case, PyDHCP will identify the interface by matching the MAC address with that of the incoming DISCOVER/REQUEST and provide the configured IP.
 
-Dynamic leases are achievable by tagging IP addresses with `DHCP`.
+Dynamic leases are achievable by setting the status of IP addresses as `DHCP`.
 
 #### Basic Setup Requirements
 
@@ -49,7 +49,7 @@ If you wish to support dynamic leases, the following custom fields will need to 
  
 Note that these names for the custom fields are the internal names.  You may use whatever labels/descriptions for the fields suit your fancy.
 
-To make an IP address available for dynamic assignment, create the prefix, and IP addresses and tag the IP addresses `DHCP`.
+To make an IP address available for dynamic assignment, create the prefix, and IP addresses and set the status of the IP address to `DHCP`.
 
 #### Supporting Automated Deployment (PXE Booting)
 
