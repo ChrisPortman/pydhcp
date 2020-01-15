@@ -30,10 +30,11 @@ class NetboxBackend(DHCPBackend):
     def __init__(self, url=None, token=None, allow_unknown_devices=False, lease_time=None):
         self.url = url or SETTINGS.netbox_url or os.getenv("NETBOX_URL", None)
         self.token = token or SETTINGS.netbox_token or os.getenv("NETBOX_TOKEN", None)
-        self.lease_time = lease_time or SETTINGS.lease_time or int(os.getenv("PYDHCP_LEASE_TIME", 3600))
+        self.lease_time = lease_time or SETTINGS.lease_time or \
+            int(os.getenv("PYDHCP_LEASE_TIME", "3600"))
         self.allow_unknown_devices = allow_unknown_devices or \
             SETTINGS.netbox_allow_unknown_devices or \
-            os.getenv("NETBOX_ALLOW_UNKNOWN_DEVICES", False)
+            os.getenv("NETBOX_ALLOW_UNKNOWN_DEVICES", "false").lower() == "true"
 
         if not self.url and self.token:
             raise RuntimeError("url and token required for netbox backend")
@@ -60,7 +61,10 @@ class NetboxBackend(DHCPBackend):
         device, _ = self._find_device_and_interface(packet)
 
         if device is None:
-            logger.warning("Received boot request from unknown machine with MAC: %s", packet.client_mac.upper())
+            logger.warning(
+                "Received boot request from unknown machine with MAC: %s",
+                packet.client_mac.upper(),
+            )
             return
 
         if not device.custom_fields.get("redeploy", False):
@@ -149,53 +153,68 @@ class NetboxBackend(DHCPBackend):
               the past.
         """
 
+        def _make_lease(_allocated_ip):
+            expire = (datetime.now(timezone.utc) + timedelta(seconds=self.lease_time)).isoformat()
+            _allocated_ip.custom_fields["pydhcp_mac"] = packet.client_mac.upper()
+            _allocated_ip.custom_fields["pydhcp_expire"] = expire
+            _allocated_ip.interface = interface
+            _allocated_ip.save()
+
+            allocated_ip_iface = ipaddress.ip_interface(_allocated_ip.address)
+            lease = Lease(
+                client_ip=allocated_ip_iface.ip,
+                client_mask=allocated_ip_iface.network.netmask,
+            )
+
+            self._add_network_settings_to_lease(lease, device, prefix)
+            return lease
+
         allocated_ip = None
 
-        if interface:
-            ip_addresses = self.client.ipam.ip_addresses.filter(interface_id=interface.id)
-            for ip in ip_addresses:
-                if ip.status.value == 5:
-                    allocated_ip = ip
-                    break
+        # next check for the most recently allocated IP address allocated to the MAC address.
+        ip_addresses = self.client.ipam.ip_addresses.filter(
+            cf_pydhcp_mac=packet.client_mac.upper(),
+            parent=prefix.prefix,
+            status=5,
+        )
+        if ip_addresses:
+            ip_addresses.sort(
+                key=lambda i: i.custom_fields.get("pydhcp_expire", None) or "9999"
+            )
 
-        if allocated_ip is None:
-            ip_pool = self._find_dynamic_pool_ips(prefix)
-            for ip in ip_pool:
-                if interface and ip.interface and interface.url == ip.interface.url:
-                    allocated_ip = ip
-                    break
+            return _make_lease(ip_addresses[-1])
 
-                current_mac = ip.custom_fields.get("pydhcp_mac", None)
-                try:
-                    expire_time = datetime.fromisoformat(
-                        ip.custom_fields.get("pydhcp_expire", None)
-                    )
-                except Exception:
-                    expire_time = None
-
-                if current_mac and current_mac.upper() == packet.client_mac.upper():
-                    allocated_ip = ip
-
-                if allocated_ip is None:
-                    if expire_time is None or datetime.now(timezone.utc) > expire_time:
-                        allocated_ip = ip
-
-        if allocated_ip:
-            expire = (datetime.now(timezone.utc) + timedelta(seconds=self.lease_time)).isoformat()
-            allocated_ip.custom_fields["pydhcp_mac"] = packet.client_mac.upper()
-            allocated_ip.custom_fields["pydhcp_expire"] = expire
-            allocated_ip.interface = interface
-            allocated_ip.save()
-
-        allocated_ip_iface = ipaddress.ip_interface(allocated_ip.address)
-        lease = Lease(
-            client_ip=allocated_ip_iface.ip,
-            client_mask=allocated_ip_iface.network.netmask,
+        # For the last checks we need all the relevant DHCP addresses
+        dhcp_addresses = self.client.ipam.ip_addresses.filter(
+            status=5,
+            parent=prefix.prefix,
         )
 
-        self._add_network_settings_to_lease(lease, device, prefix)
+        # next check for any ip address that has no allocated MAC
+        unallocated = [i for i in dhcp_addresses if not i.custom_fields.get("pydhcp_mac", None)]
+        if unallocated:
+            unallocated.sort(key=lambda i: i.address)
+            return _make_lease(unallocated[0])
 
-        return lease
+        # next check for any ip address with an expired allocation
+        expired = []
+        for i in dhcp_addresses:
+            if not i.custom_fields.get("pydhcp_expire", None):
+                continue
+
+            try:
+                expire = datetime.fromisoformat(i.custom_fields["pydhcp_expire"])
+                if datetime.now(timezone.utc) > expire:
+                    expired.append(i)
+            except Exception:
+                pass
+
+        if expired:
+            expired.sort(key=lambda i: i.custom_fields["pydhcp_expire"])
+            return _make_lease(expired[0])
+
+        # If theres no allocated IP now, we dont have any to allocate
+        return None
 
     def _add_network_settings_to_lease(self, lease, device, prefix):
         router_ip = self.client.ipam.ip_addresses.filter(parent=str(prefix), tag="gateway") or None
