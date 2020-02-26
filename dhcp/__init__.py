@@ -20,7 +20,10 @@ def run():
     SETTINGS.parse()
 
     backend = get_backend(SETTINGS.backend)
-    server = Server(backend=backend())
+    server = Server(backend=backend(),
+                    interface=SETTINGS.interface,
+                    authoritative=SETTINGS.authoritative,
+                    server_ident=SETTINGS.server_ident)
 
     logger.info("Starting DHCP server")
 
