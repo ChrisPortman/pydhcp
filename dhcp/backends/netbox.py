@@ -299,7 +299,12 @@ class NetboxBackend(DHCPBackend):
         )
 
     def _add_network_settings_to_lease(self, lease, device, prefix):
-        router_ip = self.client.ipam.ip_addresses.filter(parent=str(prefix), tag="gateway") or None
+        try:
+            router_ip = self.client.ipam.ip_addresses.filter(parent=str(prefix), tag="gateway") or None
+        except pynetbox.core.query.RequestError:
+            # The api returns HTTP 400 if the gateway tag does not exist.
+            router_ip = None
+
         if router_ip:
             router_ip = ipaddress.IPv4Interface(router_ip[0]).ip
             lease.router = router_ip
