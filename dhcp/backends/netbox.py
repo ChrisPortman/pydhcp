@@ -23,6 +23,10 @@ def obj_or_dict_get(ctx, key, default=None):
     return getattr(ctx, key, default)
 
 
+class DHCPIgnore(Exception):
+    pass
+
+
 class NetboxBackend(DHCPBackend):
     """ Manage DHCP leases from Netbox """
 
@@ -179,8 +183,13 @@ class NetboxBackend(DHCPBackend):
             return None, None, None, None
 
         device, interface = self._find_device_and_interface(packet)
-        nbip = self._find_static_lease(device, interface, prefix) or \
-            self._find_dynamic_lease(packet, prefix)
+
+        nbip = None
+        try:
+            nbip = self._find_static_lease(device, interface, prefix) or \
+                self._find_dynamic_lease(packet, prefix)
+        except DHCPIgnore:
+            pass
 
         if nbip is None:
             return None, None, None, None
@@ -192,8 +201,14 @@ class NetboxBackend(DHCPBackend):
             return None
 
         if hasattr(interface, "lag") and interface.lag is not None:
-            # Link aggregation interface member
-            interface = interface.lag
+            # Link aggregation interface member we need to only service ONE
+            # member else, it will hand the the same IP to both memebers if they
+            # come up independantly (e.g. PXE)
+            lag = interface.lag
+            if interface.mac_address != lag.mac_address:
+                raise DHCPIgnore()
+
+            interface = lag
 
         ip_addresses = self.client.ipam.ip_addresses.filter(interface_id=interface.id)
 
@@ -281,6 +296,8 @@ class NetboxBackend(DHCPBackend):
         expire = (datetime.now(timezone.utc) + timedelta(seconds=expiry)).isoformat()
         ipaddr.custom_fields["pydhcp_mac"] = packet.client_mac.upper()
         ipaddr.custom_fields["pydhcp_expire"] = expire
+        ipaddr.custom_fields["pydhcp_hostname"] = packet.client_hostname
+
         if interface:
             ipaddr.interface = interface
         ipaddr.save()
