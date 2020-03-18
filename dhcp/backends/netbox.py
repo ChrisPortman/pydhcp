@@ -340,7 +340,7 @@ class NetboxBackend(DHCPBackend):
 
         interface = None
         for _i in interfaces:
-            if _i.mac_address.upper() == packet.client_mac.upper():
+            if _i.mac_address and _i.mac_address.upper() == packet.client_mac.upper():
                 interface = _i
                 break
 
