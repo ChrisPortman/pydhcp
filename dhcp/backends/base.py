@@ -36,6 +36,26 @@ class DHCPBackend(metaclass=DHCPBackendMeta):
         """ Generate an ACKNOWLEGE response to a REQUEST """
         raise NotImplementedError()
 
+    # Implementations MAY CHOOSE to implement specific behavior for some of the specific
+    # client states that generate a DHCP request, non implemented states fall back to
+    # the generic acknowledge.  If all are implemented there is no need to implement
+    # acknowledge
+    def acknowledge_selecting(self, packet, offer):
+        """ Generate an ACKNOWLEGE response to a REQUEST from a client in SELECTING state """
+        return self.acknowledge(packet, offer)
+
+    def acknowledge_renewing(self, packet, offer):
+        """ Generate an ACKNOWLEGE response to a REQUEST from a client in RENEWING state """
+        return self.acknowledge(packet, offer)
+
+    def acknowledge_rebinding(self, packet, offer):
+        """ Generate an ACKNOWLEGE response to a REQUEST from a client in REBINDING state """
+        return self.acknowledge(packet, offer)
+
+    def acknowledge_init_reboot(self, packet, offer):
+        """ Generate an ACKNOWLEGE response to a REQUEST from a client in INITREBOOT state """
+        return self.acknowledge(packet, offer)
+
     def release(self, packet):
         """ Process a release """
         raise NotImplementedError()

@@ -84,6 +84,12 @@ class Packet():
     # pylint: disable=too-many-instance-attributes
 
     @property
+    def message_type(self):
+        """ Return the message type option name """
+        option = self.find_option(PacketOption.MESSAGE_TYPE)
+        return option.identifier.name
+
+    @property
     def receiving_ip(self):
         """ The IP address at which the packet was first received.
         returns the GIADDR if populated else the server IP receiving
@@ -134,6 +140,7 @@ class Packet():
         self.secs = 0
         self.flags = PacketFlags.BROADCAST
         self.xid = None
+        self.srciaddr = ipaddress.ip_address("0.0.0.0")
         self.inaddr = ipaddress.ip_address("0.0.0.0")
         self.ciaddr = ipaddress.ip_address("0.0.0.0")
         self.yiaddr = ipaddress.ip_address("0.0.0.0")
@@ -142,7 +149,7 @@ class Packet():
         self.chaddr = b"\x00\x00\x00\x00\x00\x00"
         self.cookie = MAGIC_COOKIE
         self.sname = ""
-        self.bootfile = ""
+        self.file = ""
         self.options = []
 
     def clone_from(self, other):
@@ -155,6 +162,7 @@ class Packet():
         self.flags = other.flags
         self.chaddr = other.chaddr
         self.giaddr = other.giaddr
+        self.ciaddr = other.ciaddr
 
         arch_type_opt = other.find_option(PacketOption.CLIENT_ARCH_TYPE)
         if arch_type_opt:
@@ -171,6 +179,25 @@ class Packet():
         if client_network_interface_id_opt:
             self.options.append(client_network_interface_id_opt)
 
+    def response_from_lease(self, lease):
+        """ Generate a response packet from lease """
+        new = Packet()
+        new.clone_from(self)
+        new.op = PacketType.BOOTREPLY
+        new.yiaddr = lease.client_ip
+
+        if lease.tftp_server:
+            new.siaddr = ipaddress.IPv4Address(lease.tftp_server)
+
+        if self.find_option(PacketOption.MESSAGE_TYPE).value == MessageType.DHCPDISCOVER:
+            new.options.append(Option(PacketOption.MESSAGE_TYPE, MessageType.DHCPOFFER))
+        else:
+            new.options.append(Option(PacketOption.MESSAGE_TYPE, MessageType.DHCPACK))
+
+        new.options.append(Option(PacketOption.SERVER_IDENT, self.inaddr))
+        new.options += lease.options
+        return new
+
     def unpack(self, payload):
         """Unpack the wireline data into attributes"""
         self.op, self.htype, self.hlen, self.hops = struct.unpack_from("BBBB", payload, 0)
@@ -180,11 +207,12 @@ class Packet():
         self.yiaddr = ipaddress.ip_address(struct.unpack_from("!I", payload, 16)[0])
         self.siaddr = ipaddress.ip_address(struct.unpack_from("!I", payload, 20)[0])
         self.giaddr = ipaddress.ip_address(struct.unpack_from("!I", payload, 24)[0])
-        self.chaddr = struct.unpack_from("12s", payload, 28)[0][:6]
-        self.sname = struct.unpack_from("64s", payload, 44)[0].decode("ascii")
+        self.chaddr = struct.unpack_from("16s", payload, 28)[0][:self.hlen]
+        self.sname = struct.unpack_from("64s", payload, 44)[0].decode("ascii").strip("\x00")
+        self.file = struct.unpack_from("128s", payload, 108)[0].decode("ascii").strip("\x00")
+        self.cookie = struct.unpack_from("4s", payload, 236)[0]
 
         self.op = PacketType(self.op)
-        self.cookie = struct.unpack_from("4s", payload, 236)[0]
 
         offset = 240
         while offset < len(payload):
@@ -220,7 +248,7 @@ class Packet():
         struct.pack_into("!II", result, 20, int(self.siaddr), int(self.giaddr))
         struct.pack_into("12s", result, 28, self.chaddr)
         struct.pack_into("64s", result, 44, self.sname.encode("ascii"))
-        struct.pack_into("128s", result, 108, self.bootfile.encode("ascii"))
+        struct.pack_into("128s", result, 108, self.file.encode("ascii"))
         struct.pack_into("4s", result, 236, MAGIC_COOKIE)
 
         for i in self.options:
@@ -242,6 +270,7 @@ class Packet():
     def dump(self, out=sys.stdout):
         """Print the packet attributes"""
         print("Op: {0}".format(self.op.name), file=out)
+        print("Flags: {0}".format(self.flags), file=out)
         print("Client address: {0}".format(self.ciaddr), file=out)
         print("Your address: {0}".format(self.yiaddr), file=out)
         print("Server address: {0}".format(self.siaddr), file=out)

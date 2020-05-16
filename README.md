@@ -20,16 +20,16 @@ The basic usage provides for 3 command line arguments:
  * `-i|--interface`: specify `*` to listen on all interfaces, or specify one or more times with an interface name (e.g. "eth0") to listen on specific interfaces.
  * `-a|--authoritive`: boolean flag. Authoritative DHCP servers send a NAK to clients it does not wish to provide a lease to which will effectively stop DHCP on the client.  Non-authoritative servers will simply ignore the client leaving other DHCP servers free to respond.
  * `-b|--backend`: the name of the backend to use.  The selection of a backend will invoke the need for backend specific arguments.
- 
+
 E.g:
 ```
 > dhcp -i * -a --backend=netbox <netbox arguments>
 ```
- 
+
 ## Backends
- 
+
 ### Netbox
- 
+
 The netbox backend will use a netbox instance to generate lease information.  Static leases are achieved by configuring a Device or Virtual Machine with a network interface that has the MAC address properly set and an IP address assigned.  If this is the case, PyDHCP will identify the interface by matching the MAC address with that of the incoming DISCOVER/REQUEST and provide the configured IP.
 
 Dynamic leases are achievable by setting the status of IP addresses as `DHCP`.
@@ -46,7 +46,9 @@ There are a number of values that are looked up via the configuration context da
 If you wish to support dynamic leases, the following custom fields will need to be setup in netbox and applied to `IPAM->IP Address` objects:
  * `pydhcp_mac`: text field used to store the MAC address to which the IP was last allocated. Set required=false, no default.
  * `pydhcp_expire`: used to store the expiry time of the lease. Set required=false, no default.
- 
+ * `pydhcp_hostname`: used to store the hostname in the DHCP discover/request.  Handy when providing IPs to unknown devices, or devices
+ without interfaces to which the IP can be attached.
+
 Note that these names for the custom fields are the internal names.  You may use whatever labels/descriptions for the fields suit your fancy.
 
 To make an IP address available for dynamic assignment, create the prefix, and IP addresses and set the status of the IP address to `DHCP`.
@@ -58,5 +60,16 @@ The netbox backend provides a process for supporting the automated deployment of
  * `pxe_boot_file`: the path of the file to load via TFTP in the case of legacy, non UEFI based, bioses.  Required if supporting such systems.
  * `uefi_boot_file`: the path of the file to load via TFTP in the case of UEFI based boot processes.  Required if supporting such systems.
 
+An example `pydhcp_configuration` config context looks like:
 
-
+```json
+{
+    "pydhcp_configuration": {
+        "dns_servers": [
+            "192.168.10.3"
+        ],
+        "pxe_boot_file": "centos7/pxelinux.0",
+        "tftp_server": "192.168.10.5"
+    }
+}
+```

@@ -75,6 +75,11 @@ class Lease():
         if self.tftp_filename:
             yield Option(PacketOption.TFTP_FILENAME, self.tftp_filename)
 
+    def __str__(self):
+        return "Lease: IP={}, Mask={}, Router={}".format(
+            self.client_ip, self.client_mask, self.router
+        )
+
     def __repr__(self):
         return (
             "Lease(started_at={}, client_mac={}, client_ip={}, client_mask={}, "
