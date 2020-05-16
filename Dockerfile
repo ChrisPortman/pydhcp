@@ -8,7 +8,6 @@ RUN pip install --no-cache --upgrade pip
 
 WORKDIR /tmp/dhcp
 COPY . .
-#RUN pip install ./pynetbox*.tar.gz
 RUN pip install .["netbox"] && \
     rm -rf /tmp/dhcp
 
