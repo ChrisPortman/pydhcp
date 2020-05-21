@@ -27,12 +27,13 @@ def run():
 
     logger.info("Starting DHCP server")
 
-    try:
-        server.serve()
-    except KeyboardInterrupt:
-        pass
-    except Exception as ex:
-        logger.error("Error running DHCP server: %s", str(ex), exc_info=True)
+    while True:
+        try:
+            server.serve()
+        except KeyboardInterrupt:
+            break
+        except Exception as ex:
+            logger.error("Error running DHCP server: %s", str(ex), exc_info=True)
 
     logger.info("DHCP server stopped")
 
