@@ -215,7 +215,7 @@ class Server():
 
         self.send_packet(sock, ack)
 
-    def handle_release(self, packet):
+    def handle_release(self, sock, packet):
         """ Handle a DHCP release message """
         self.backend.release(packet)
 
