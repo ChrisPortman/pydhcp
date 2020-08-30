@@ -189,6 +189,9 @@ class Packet():
         if lease.tftp_server:
             new.siaddr = ipaddress.IPv4Address(lease.tftp_server)
 
+        if lease.tftp_filename:
+            new.file = lease.tftp_filename
+
         if self.find_option(PacketOption.MESSAGE_TYPE).value == MessageType.DHCPDISCOVER:
             new.options.append(Option(PacketOption.MESSAGE_TYPE, MessageType.DHCPOFFER))
         else:
