@@ -318,10 +318,11 @@ class Option():
     @staticmethod
     def __pack_route(subnet, gateway):
         result = struct.pack("B", subnet.prefixlen)
-        packed = subnet.network_address.packed
-        for i in range(0, 4):
-            if packed[i] != b"\x00":
-                result += packed[i:i + 1]
+
+        octets = int(subnet.prefixlen / 8)
+        if subnet.prefixlen % 8:
+            octets += 1
+        result += subnet.network_address.packed[:octets]
 
         result += gateway.packed
         return result
